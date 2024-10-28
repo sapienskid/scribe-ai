@@ -195,74 +195,6 @@ streamlit run scribe_ai/frontend/app.py
    streamlit run scribe_ai/frontend/app.py
    ```
 
-## 🌟 Usage
-
-### Basic Usage
-
-```python
-from scribe_ai.core import ContentGenerator
-from scribe_ai.utils.config import Config
-
-# Initialize configuration
-config = Config()
-
-# Create content generator
-generator = ContentGenerator(config)
-
-# Generate blog post
-blog_post = generator.create_content(
-    content_type="blog",
-    topic="AI in Healthcare",
-    style="informative",
-    length="medium",
-    keywords=["AI", "healthcare", "technology"],
-)
-
-# Generate social media content
-social_content = generator.create_content(
-    content_type="social",
-    platform="twitter",
-    topic="Tech News",
-    tone="professional",
-)
-```
-
-### Advanced Usage
-
-```python
-# Custom content generation with advanced parameters
-custom_content = generator.create_content(
-    content_type="custom",
-    template="product_review",
-    parameters={
-        "product_name": "Example Product",
-        "category": "Electronics",
-        "key_features": ["Feature 1", "Feature 2"],
-        "target_audience": "Tech enthusiasts",
-        "tone": "technical",
-        "include_comparison": True,
-        "pricing_analysis": True,
-    },
-    optimization={
-        "seo": True,
-        "readability": "advanced",
-        "keyword_density": 2.0,
-    },
-    output_format="markdown",
-)
-
-# Research-based content generation
-research_content = generator.create_researched_content(
-    topic="Renewable Energy Trends",
-    research_parameters={
-        "sources": ["academic", "news", "reports"],
-        "date_range": "last_2_years",
-        "min_sources": 5,
-        "include_statistics": True,
-    },
-    output_format="full_article",
-)
-```
 ## Dependencies
 
 ```bash
@@ -359,61 +291,6 @@ graph TD
     B --> G[User Output]
 ```
 
-## 📖 API Reference
-
-### Content Generation API
-
-```python
-class ContentGenerator:
-    def create_content(
-        self,
-        content_type: str,
-        topic: str,
-        style: Optional[str] = "standard",
-        length: Optional[str] = "medium",
-        **kwargs
-    ) -> Content:
-        """
-        Generate content based on specified parameters.
-        
-        Args:
-            content_type: Type of content to generate
-            topic: Main topic or subject
-            style: Writing style
-            length: Content length
-            **kwargs: Additional parameters
-            
-        Returns:
-            Content: Generated content object
-        """
-        pass
-```
-
-### Research API
-
-```python
-class ResearchAgent:
-    def research(
-        self,
-        topic: str,
-        depth: str = "medium",
-        sources: List[str] = ["web", "academic"],
-        **kwargs
-    ) -> ResearchResult:
-        """
-        Conduct research on specified topic.
-        
-        Args:
-            topic: Research topic
-            depth: Research depth
-            sources: Source types to include
-            **kwargs: Additional parameters
-            
-        Returns:
-            ResearchResult: Research findings
-        """
-        pass
-```
 
 ## 💻 Development
 

@@ -89,3 +89,38 @@ class ResearchFinding:
             "metadata": self.metadata,
             "stories": [story.to_dict() for story in self.stories]
         }
+
+class Source:
+    def __init__(self, url:str, title:str, content:str, author:Optional[str]=None, published_date:Optional[str]=None):
+        self.id = str(uuid.uuid4())
+        self.url = url
+        self.title = title
+        self.content = content
+        self.published_date = published_date
+        self.used_sections =[]
+        self.credibility_score =0.0
+        self.verification_status = None
+
+    def add_used_section(self, section:str):
+        if section not in self.used_sections:
+            self.used_sections.append(section)
+        
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "url": self.url,
+            "title": self.title,
+            "author": self.author,
+            "published_date": self.published_date,
+            "credibility_score": self.credibility_score,
+            "verification_status": self.verification_status,
+            "used_sections": self.used_sections
+        }
+    def to_citation(self)->str:
+        """Generate a citation string for the source."""
+        citation = f"[{self.title}] ({self.url})"
+        if self.author:
+            citation += f"by {self.author}"
+        if self.published_date:
+            citation +=f"({self.published_date})"
+        return citation

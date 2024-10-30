@@ -27,3 +27,31 @@ def dataclass_to_dict(obj):
         return obj.value
     else:
         return obj
+    
+class AgentRole(Enum):
+    QUERY_SPECIALIST = "Query Generation Specialist"
+    SEARCH_EXPERT = "Search Operations Expert"
+    FACT_CHECKER = "Fact Verification Specialist"
+    SYNTHESIS_EXPERT = "Information Synthesis Expert"
+    WEB_EXPERT = "Web Research Specialist"
+    CRITIC = "Critical Analysis Specialist"
+    STORYTELLER = "Narrative Specialist"
+
+@dataclass
+class ResearchQuery:
+    text:str
+    type:str
+    priority:int
+    agent:AgentRole
+    context:Optional[str]=None
+
+    def to_dict(self):
+        return {
+            "text": self.text,
+            "type": self.type,
+            "priority": self.priority,
+            "agent": self.agent.value,
+            "context": self.context
+        }
+
+        

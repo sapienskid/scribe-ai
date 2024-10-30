@@ -204,6 +204,24 @@ class GeminiAPI:
                 logger.error(f"Unexpected error during reset: {str(e)}")
                 raise
 
+    def update_safety_settings(self, new_settings: List[SafetySetting])-> None:
+        """
+        Update the safety settings for the model.
+        
+        Args:
+            new_settings (List[SafetySetting]): List of new safety settings
+        """
+        logger.info("Updating safety settings")
+        self.safety_settings=[
+            {
+                "category":setting.category, "threshold":setting.threshold
+            }for setting in new_settings
+        ]
+        self.model = self._initialize_model()
+        self.reset_chat()
 
+    def get_chat_history(self) -> List[Dict[str, str]]:
+        "Return the current chat history"
+        return self.chat_history.copy()
 
 

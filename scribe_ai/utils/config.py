@@ -33,10 +33,21 @@ class APIManager:
             keys.append(main_key)
 
         for i in range(1, 6):
-            key=os.getenv(f{prefix}_{i})
+            key=os.getenv(f'{prefix}_{i}')
             if key:
                 keys.append(key)
         return keys
+    def get_current_key(self):
+        return self.api_keys[0] if self.api_keys else None
+    def switch_key(self):
+        if len(self.api_keys)>1:
+            current_key=self.api_keys[0]
+            self.api_keys=self.api_keys[1:]+[self.api_keys[0]]
+            new_key = self.api_keys[0]
+            logger.info(f"Switched from {current_key[:5] + '...'} to {new_key[:5] + '...'}")
+        else:
+            logger.warning("No keys available for switching.")
+
     
 
     

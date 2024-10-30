@@ -103,4 +103,12 @@ api_parameters = {
     "top_k": 0.64,
 }
 
+def get_google_api_key():
+    return api_manager.google_api_keys[0] if api_manager.google_api_keys else GOOGLE_API_KEY
+
+def get_google_search_api_key():
+    return api_manager.google_search_api_keys[0] if api_manager.google_search_api_keys else GOOGLE_SEARCH_API_KEY
+
+def get_google_search_engine_id():
+    return api_manager.google_search_engine_id_keys[0] if api_manager.google_search_engine_id_keys else GOOGGLE_SEARCH_ENGINE_ID
     

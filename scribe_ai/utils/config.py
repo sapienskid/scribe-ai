@@ -96,7 +96,11 @@ class APIManager:
             if key_to_remove in self.google_api_keys:
                 self.google_api_keys.remove(key_to_remove)
 
-
-
+api_manager = APIManager()
+api_parameters = {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 0.64,
+}
 
     

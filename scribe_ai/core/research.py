@@ -124,3 +124,28 @@ class Source:
         if self.published_date:
             citation +=f"({self.published_date})"
         return citation
+
+class BaseAgent:
+    def __init__(self, role:AgentRole, api, ratelimiter=None):
+        self.role = role
+        self.api = api
+        self.rate_limiter = ratelimiter
+        self.memory: List[Dict[str, Any]]=[]
+    async def think(self, context:str, )-> str:
+        prompt=f"""
+        As a {self.role.value}, analyze this context:
+        {context}
+        Think step by step about:
+        1. What are teh key aspects to consider?
+        2. What potential challenges might arise?
+        3. What approach would be most effective?
+        Respond in first person, as if you are actively thinking thoough this.
+        """
+        response = await self.api.generate_content(prompt)
+        return response if isinstance(response, str) else json.dumps(response)
+    def remember(self, information:Dict[str, Any]):
+        self.memory.append(information)
+    def recall(self, context:str)-> List[Dict[str, Any]]:
+        return [m for m in self.memory if context.lower() in str(m).lower()]
+    
+        

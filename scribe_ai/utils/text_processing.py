@@ -133,4 +133,45 @@ class GeminiAPI:
         except APIConfigurationError as e:
             logger.error(f"Failed to reconfigure Gemini model: {str(e)}")
             raise
-    
+    async def generate_content(self, prompt:str)-> Optional[Any]:
+        """
+        Generate content based on the provided prompt.
+        
+        Args:
+            prompt (str): The prompt to generate content from
+        
+        Returns:
+            Optional[Any]: The generated content, either as text or any
+        """
+        try:
+            formatted_prompt = f"Human:{prompt}"
+            logger.info(f"Sending prompt to Gemini API: {formatted_prompt[:200]}...")
+            response=self.chat_session.send_message(formatted_prompt)
+            logger.info("Received response from Gemini API")
+            self.chat_history.append({
+                "role":"user",
+                "content":prompt
+            }
+            )
+            self.chat_history.append({
+                "role":"assistatnt",
+                "content":response.txt
+
+            })
+            if self.generation_config["response_mime_type"]=="application/json":
+                try:
+                    return json.loads(response.txt)
+                except json.JSONDecodeError as json_error:
+                    logger.error(f"JSON decode error: {str(json_error)}")
+                    logger.error(f"RAW response: {response.txt[:1000]}...")
+                    return response.txt
+            return response.txt
+        except google.api_core.exceptions.ResourceExhausted:
+            logger.error("API key exhausted. Switching to next key.")
+            self.switch_and_reconfigure()
+            return await self.generate_content(prompt)
+        except Exception as e:
+            logger.error(f"An error occured while generating content: {str(e)}")
+            return None
+
+

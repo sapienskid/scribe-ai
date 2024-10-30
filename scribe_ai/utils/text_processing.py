@@ -173,5 +173,37 @@ class GeminiAPI:
         except Exception as e:
             logger.error(f"An error occured while generating content: {str(e)}")
             return None
+    def reset_chat(self)->None:
+         """Reset the chat session and initialize with system instruction if present."""
+         logger.info("Resetting chat session")
+         max_retries = len(api_manager.api_keys)
+         for attempt in range(max_retries):
+             try:
+                 logger.info(f"Attempt {attempt+1}/{max_retries} to reset chat session")
+                 self.chat_session=self.model.start_chat(history=[])
+                 self.chat_history=[]
+                 if self.system_instruction:
+                     logger.info("Sending system instruction")
+                     formatted_instruction=f"System: {self.system_instruction}"
+                     response = self.chat_session.send_message(formatted_instruction)
+                     self.chat_history.append({
+                         "role":"system",
+                         "content":self.system_instruction
+                     })
+                     logger.info(f"System instruction sent successfully. Response:{response.text[:100]}...")
+                 logger.info("chat session reset successfully")
+                 return
+             except google.api_core.exceptions.ResourceExhausted as e:
+                logger.warning(f"ResourceExhausted error during reset (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    self.switch_and_reconfigure()
+                else:
+                    logger.error("All API keys exhausted. Unable to reset chat session.")
+                    raise
+             except Exception as e:
+                logger.error(f"Unexpected error during reset: {str(e)}")
+                raise
+
+
 
 

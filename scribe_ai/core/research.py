@@ -38,6 +38,20 @@ class AgentRole(Enum):
     STORYTELLER = "Narrative Specialist"
 
 @dataclass
+class Story:
+    title:str
+    content:str
+    source:str
+    relevance_score:float
+    emotional_impact:float
+    verification_status:str
+    metadata: Dict[str, Any]
+    border_themes: Optional[List[str]]=None
+    narrative_elements: Optional[Dict[str, Any]]=None
+    def to_dict(self):
+        return dataclass_to_dict(self)
+
+@dataclass
 class ResearchQuery:
     text:str
     type:str
@@ -54,4 +68,24 @@ class ResearchQuery:
             "context": self.context
         }
 
-        
+@dataclass
+class ResearchFinding:
+    query:ResearchQuery
+    content:str
+    sources:List[str]
+    urls:List[str]
+    confidence:float
+    agent:AgentRole
+    metadata:Dict[str,Any] =None
+    stories: List[Story]=None
+    def to_dict(self):
+        return {
+            "query": self.query.to_dict(),
+            "content": self.content,
+            "sources": self.sources,
+            "urls": self.urls,
+            "confidence": self.confidence,
+            "agent": self.agent.value,
+            "metadata": self.metadata,
+            "stories": [story.to_dict() for story in self.stories]
+        }

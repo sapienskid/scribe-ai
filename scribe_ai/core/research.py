@@ -133,7 +133,7 @@ class BaseAgent:
         self.memory: List[Dict[str, Any]]=[]
     async def think(self, context:str, )-> str:
         prompt=f"""
-        As a {self.role.value}, analyze this context:
+        As a {self.role.value}, analyze this content plan:
         {context}
         Think step by step about:
         1. What are teh key aspects to consider?
@@ -148,4 +148,59 @@ class BaseAgent:
     def recall(self, context:str)-> List[Dict[str, Any]]:
         return [m for m in self.memory if context.lower() in str(m).lower()]
     
+class QueryAgent(BaseAgent):
+    def __init__(self, api):
+        super().__init__(AgentRole.QUERY_SPECIALIST, api)
+    async def generate_queries(self, content_plan:str)-> List[ResearchQuery]:
+        thinking = await self.think(content_plan)
+        prompt = f"""
+        Based on this thinking:{thinking}
+        Generate a diverse set of research queries for : {content_plan}
+
+        Create different types of queries:
+        1. Web queries (for current information)
+        2. Fact-checking queries
+        3. Deep-dive specific aspect queries
+
+        Return a JSON array where each object has exactly these fields:
+        {{
+            "text": "the actual query string",
+            "type": "one of: web, fact-check, or deep-dive",
+            "priority": "number from 1-5, 5 being highest",
+            "agent": "must be one of: {', '.join(role.value for role in AgentRole)}"
+        }}
         
+        """
+        try:
+            queries_data = await self.api.generate_content(prompt)
+
+            if not isinstance(queries_data, list):
+                logger.error(f"Expected JSON array, got: {type(queries_data)}")
+                return []
+            research_queries=[]
+            for query_data in queries_data:
+                try:
+                    if not all(key in query_data for key in ["text", 'type', 'priority', 'agent']):
+                        logger.error(f"Missing required fields in query data: {query_data}")
+                        continue
+                    if query_data['type'] not in ['web', 'fact-check', 'deep-dive']:
+                        logger.error(f"Invalid query type: {query_data['type']}")
+                        continue
+                    if not (1<= query_data["priority"]<=5):
+                        logger.error(f"Invalid priority vlaue: {query_data["priority"]}")
+                        continue
+                    try:
+                        agent_role= next(role for role in AgentRole if role.value == query_data["agent"])
+                    except StopIteration:
+                        logger.error(f"Invalid agent role: {query_data["agent"]}")
+                        continue
+                    research_queries.append(ResearchQuery(text=query_data["text"],
+                                                          type= query_data["type"], priority=query_data["priority"], agent=agent_role, context=content_plan))
+                    
+                except Exception as e:
+                    logger.error(f"Error processing query data: {str(e)}")
+            return research_queries
+        except Exception as e:
+            logger.error(f"Error generating queries: {str(e)}")
+            return []
+            

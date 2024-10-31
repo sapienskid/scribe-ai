@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from dotenv import load_dotenv
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass, fields
 from enum import Enum
 import uuid
@@ -1040,6 +1040,137 @@ class ReportFormatter:
             logger.error(f"Error formatting markdown report: {str(e)}")
             return f"# Error in Report Generation\n\nAn error occurred: {str(e)}"        
 
+class ResearchImprover:
+    def __init__(self, orchestrator):
+        self.orchestrator = orchestrator
+        self.improvement_threshold =8.0
+        self.max_iterations =3
+    async def improve_research(self, synthesis: Dict[str, Any], critique: Dict[str, Any], findings:List[ResearchFinding], stories:List[Story], content_plan:str)->Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Iteratively improve research based on critique feedback. Returns improved synthesis and critique."""
+        current_synthesis = synthesis
+        current_critique = critique
+        iteration =0
+        while (current_critique['overal_quality']< self.improvement_threshold and iteration<self.max_iterations):
+            improvement_plan = await self._create_improvement_plan(current_critique)
+            new_findings = await self._conduct_additional_research(
+                improvement_plan, content_plan, findings
+            )
+            findings.extend(new_findings)
+            if 'narrative_gaps' in improvement_plan:
+                new_stories = await self._find_additional_stories(
+                    improvement_plan['narrative_gaps'], content_plan
+                )
+                stories.extend(new_stories)
+            current_synthesis = await self._improve_synthesis(
+                current_synthesis, improvement_plan, findings, stories
+            )
+            current_critique = await self._improve_synthesis(
+                current_synthesis, improvement_plan, findings, stories
+            )
+            iteration +=1
+        return current_synthesis, current_critique
+    
+    async def _create_improvement_plan(self, critique:Dict[str, Any])-> Dict[str, Any]:
+        """Generate a structured improvement plan based on the critique"""
+        prompt = f"""
+        Analyze this critique and create a specific improvement plan:
+        {json.dumps(critique)}
+
+        Create a detailed plan with these exact sections in JSON format:
+        {{
+            "research_gaps": [
+                {{
+                    "topic": "specific topic needing more research",
+                    "reason": "why this needs more research",
+                    "suggested_queries": ["query1", "query2"]
+                }}
+            ],
+            "narrative_gaps": [
+                {{
+                    "theme": "theme needing better story coverage",
+                    "requirements": ["requirement1", "requirement2"]
+                }}
+            ],
+            "synthesis_improvements": [
+                {{
+                    "section": "section name",
+                    "issue": "what needs improvement",
+                    "suggestions": ["suggestion1", "suggestion2"]
+                }}
+            ],
+            "verification_needs": [
+                {{
+                    "claim": "claim needing verification",
+                    "verification_approach": "suggested approach"
+                }}
+            ]
+        }}
+        """
+        response = await self.orchestrator.api.generate_content(prompt)
+        return json.loads(response) if isinstance(response, str) else response
+    async def _conduct_additional_research(self, improvement_plan:Dict[str, Any])-> List[ResearchFinding]:
+        """Conduct additional research based on the improvement plan."""
+        new_findings =[]
+        for gap in improvement_plan.get('research_gaps', []):
+            queries =[]
+            for query_text in gap['suggested_queries']:
+                query = ResearchQuery(
+                    text=query_text, 
+                    type='deep-dive',
+                    priority=5,
+                    agent=AgentRole.WEB_EXPERT,
+                    context= f'Filling research gap: {gap['topic']}'
+                )
+                queries.append(query)
+            tasks =[self.orchestrator.agents[AgentRole.WEB_EXPERT].search_web(query) for query in queries]
+            results = await asyncio.gather(*tasks)
+            for finding in results:
+                verification = await self.orchestrator.agents[AgentRole.FACT_CHECKER].verify_information(finding)
+                if verification['verification_status'] in ['verified', 'partially_verified']:
+                    new_findings.append(finding)
+        return new_findings
+    
+    async def _find_additional_stories(self, narrative_gaps:List[Dict[str, Any]], content_plan:str)-> List[Story]:
+        """Find additional stories based on the narrative gaps."""
+        storyteller = self.orchestrator.agents[AgentRole.STORYTELLER]
+        all_new_stories = []
+        for gap in narrative_gaps:
+            prompt = f"""
+            Find stories specifically addressing this narrative gap:
+            Theme: {gap['theme']}
+            Requirements: {', '.join(gap['requirements'])}
+            Original content plan: {content_plan}
+            """
+            new_stories = await storyteller.find_stories(prompt)
+            all_new_stories.extend(new_stories)
+        return all_new_stories
+    async def _improve_synthesis(self, current_synthesis: Dict[str, Any], 
+                               improvement_plan: Dict[str, Any],
+                               findings: List[ResearchFinding], 
+                               stories: List[Story]) -> Dict[str, Any]:
+        """Improve synthesis based on improvement plan."""
+        prompt = f"""
+        Improve this synthesis based on the improvement plan and additional research:
+        
+        Current Synthesis: {json.dumps(current_synthesis)}
+        Improvement Plan: {json.dumps(improvement_plan)}
+        Number of total findings: {len(findings)}
+        Number of total stories: {len(stories)}
+
+        Focus on:
+        1. Addressing identified gaps
+        2. Strengthening weak sections
+        3. Incorporating new research
+        4. Improving narrative flow
+        5. Enhancing evidence support
+
+        Return the improved synthesis maintaining the exact same JSON structure as the input synthesis.
+        """
+        response = await self.orchestrator.api.generate_content(prompt)
+        return json.loads(response) if isinstance(response, str) else response
+    
+
+
 
 
 
@@ -1056,7 +1187,6 @@ class ResearchOrchestrator:
             AgentRole.CRITIC:CriticAgent(api),
             AgentRole.STORYTELLER: StorytellerAgent(api)
         }
-        self.memory = ResearchMemory()
         self.qa_system = QuestionAnswering(
             self.agents[AgentRole.WEB_EXPERT],
             self.agents[AgentRole.FACT_CHECKER]

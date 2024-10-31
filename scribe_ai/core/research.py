@@ -8,6 +8,7 @@ from dataclasses import dataclass, fields
 from enum import Enum
 import uuid
 from datetime import datetime
+import asyncio
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -772,7 +773,78 @@ class StoryFinder:
                 "suggestions": ["Pending"]
             }
         )
+class QuestionAnswering:
+    """Handles direct question answering with source attribution,"""
+    def __init__(self, web_research:WebResearchAgent, fact_checker:FactCheckAgent):
+        self.web_research = web_research
+        self.fact_checker = fact_checker
     
+    async def answer_question(self, question:str) ->Dict[str, Any]:
+        """
+        Answers a specific question with sources and confidence scores.
+        
+        Args:
+            question: The question to answer
+            
+        Returns:
+            Dict containing answer, sources, confidence score, and verification status
+        """
+        query = ResearchQuery(
+            text=question, type="fact-check",
+            priority=5, 
+            agent=AgentRole.WEB_EXPERT
+        )
+        finding = await self.web_research.search_web(query)
+        verification = await self.fact_checker.verify_information(finding)
+        answer_prompt = f"""
+        Based on this research finding:
+        {finding.content}
+        
+        Generate a concise, direct answer to: {question}
+        
+        Requirements:
+        1. Be specific and to the point
+        2. Include relevant numbers and facts
+        3. Cite sources using [Source Title](URL) format
+        4. Express any uncertainty when appropriate
+        
+        Return as JSON:
+        {{
+            "answer": "concise answer with inline citations",
+            "confidence": 0.0-1.0,
+            "key_points": ["point1", "point2"],
+            "limitations": ["limitation1", "limitation2"]
+        }}
+        """
+        try:
+            response = await self.web_research.api.generate_content(answer_prompt)
+            if isinstance(response, str):
+                response = json.loads(response)
+            
+            return {
+                "answer": response["answer"],
+                "sources": finding.urls,
+                "confidence": min(finding.confidence, float(verification["confidence_score"])),
+                "verification_status": verification["verification_status"],
+                "key_points": response.get("key_points", []),
+                "limitations": response.get("limitations", []),
+                "metadata": {
+                    "issues_found": verification["issues_found"],
+                    "suggestions": verification["suggestions"]
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error in answer generation: {str(e)}")
+            return {
+                "answer": "Error generating answer",
+                "sources": [],
+                "confidence": 0.0,
+                "verification_status": "error",
+                "key_points": [],
+                "limitations": ["Error in processing"],
+                "metadata": {"error": str(e)}
+            }
+      
 
 class StorytellerAgent(BaseAgent):
     def __init__(self, api):
@@ -967,101 +1039,4 @@ class ReportFormatter:
         except Exception as e:
             logger.error(f"Error formatting markdown report: {str(e)}")
             return f"# Error in Report Generation\n\nAn error occurred: {str(e)}"        
-        
 
-class ResearchMemory:
-    """Stores and manages research improvements and lessons learned."""
-    def __init__(self):
-        self.improvements:Dict[str, Set[str]]={
-            'methodology':set(),
-            'sources':set(),
-            'analysis':set(),
-            'presentations':()
-        }
-        self.success_strategies:Dict[str, float]={}
-        self.failed_approaches:Set[str] = set()
-    def add_improvement(self, category:str, suggestion:str):
-        if category in self.improvements:
-            self.improvements[category].add(suggestion)
-    def add_successful_strategy(self, strategy:str, success_rate:float):
-        current_rate = self.success_strategies.get(strategy, 0.0)
-        self.success_strategies[strategy]= 0.7 * success_rate +0.3 * current_rate
-    def add_failed_approach(self, approach:str):
-        self.failed_approaches.add(approach)
-    def get_best_practices(self) -> Dict[str, List[str]]:
-        return {
-            category: sorted(suggestions, key=lambda x: len(x), reverse=True)[:5]
-            for category, suggestions in self.improvements.items()
-        }
-
-class QuestionAnswering:
-    """Handles direct question answering with source attribution,"""
-    def __init__(self, web_research:WebResearchAgent, fact_checker:FactCheckAgent):
-        self.web_research = web_research
-        self.fact_checker = fact_checker
-    
-    async def answer_question(self, question:str) ->Dict[str, Any]:
-        """
-        Answers a specific question with sources and confidence scores.
-        
-        Args:
-            question: The question to answer
-            
-        Returns:
-            Dict containing answer, sources, confidence score, and verification status
-        """
-        query = ResearchQuery(
-            text=question, type="fact-check",
-            priority=5, 
-            agent=AgentRole.WEB_EXPERT
-        )
-        finding = await self.web_research.search_web(query)
-        verification = await self.fact_checker.verify_information(finding)
-        answer_prompt = f"""
-        Based on this research finding:
-        {finding.content}
-        
-        Generate a concise, direct answer to: {question}
-        
-        Requirements:
-        1. Be specific and to the point
-        2. Include relevant numbers and facts
-        3. Cite sources using [Source Title](URL) format
-        4. Express any uncertainty when appropriate
-        
-        Return as JSON:
-        {{
-            "answer": "concise answer with inline citations",
-            "confidence": 0.0-1.0,
-            "key_points": ["point1", "point2"],
-            "limitations": ["limitation1", "limitation2"]
-        }}
-        """
-        try:
-            response = await self.web_research.api.generate_content(answer_prompt)
-            if isinstance(response, str):
-                response = json.loads(response)
-            
-            return {
-                "answer": response["answer"],
-                "sources": finding.urls,
-                "confidence": min(finding.confidence, float(verification["confidence_score"])),
-                "verification_status": verification["verification_status"],
-                "key_points": response.get("key_points", []),
-                "limitations": response.get("limitations", []),
-                "metadata": {
-                    "issues_found": verification["issues_found"],
-                    "suggestions": verification["suggestions"]
-                }
-            }
-        except Exception as e:
-            logger.error(f"Error in answer generation: {str(e)}")
-            return {
-                "answer": "Error generating answer",
-                "sources": [],
-                "confidence": 0.0,
-                "verification_status": "error",
-                "key_points": [],
-                "limitations": ["Error in processing"],
-                "metadata": {"error": str(e)}
-            }

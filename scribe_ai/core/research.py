@@ -1040,3 +1040,129 @@ class ReportFormatter:
             logger.error(f"Error formatting markdown report: {str(e)}")
             return f"# Error in Report Generation\n\nAn error occurred: {str(e)}"        
 
+
+
+
+class ResearchOrchestrator:
+    def __init__(self, rate_limiter, api):
+        self.api = api
+        self.rate_limiter = rate_limiter
+        self.sources ={}
+        self.agents ={
+            AgentRole.QUERY_SPECIALIST: QueryAgent(api),
+            AgentRole.WEB_EXPERT:WebResearchAgent(api, rate_limiter),
+            AgentRole.FACT_CHECKER: FactCheckAgent(api),
+            AgentRole.SYNTHESIS_EXPERT: SynthesisAgent(api),
+            AgentRole.CRITIC:CriticAgent(api),
+            AgentRole.STORYTELLER: StorytellerAgent(api)
+        }
+        self.memory = ResearchMemory()
+        self.qa_system = QuestionAnswering(
+            self.agents[AgentRole.WEB_EXPERT],
+            self.agents[AgentRole.FACT_CHECKER]
+        )
+        for agent in self.agents.values():
+            if isinstance(agent, WebResearchAgent):
+                agent.set_orchestrator(self)
+
+    def _apply_improvements(self, synthesis: Dict[str, Any], critique: Dict[str, Any]) -> Dict[str, Any]:
+        """Applies improvement based on the critique and stored memory."""
+        for suggestion in critique ["suggestions"]:
+            category = self._categorize_suggestion(suggestion)
+            self.memory.add_improvement(category, suggestion)
+
+        best_practices = self.memory.get_best_practices()
+        improved_synthesis = synthesis.copy()
+        if "methodology" in improved_synthesis:
+            methods = improved_synthesis("methodology")
+            if isinstance(methods, dict):
+                methods["improvements_applied"] = best_practices["methodology"]
+        if "findings" in improved_synthesis:
+            findings = improved_synthesis["findings"]
+            if isinstance(findings, dict):
+                findings["methodology_notes"] = best_practices["analysis"]
+        return improved_synthesis
+    def _categorize_suggestion(self, suggestion:str)->str:
+        """Categorizes improvement suggestions into predefined categories"""
+        keywords = {
+            "methodology": ["method", "approach", "process", "procedure"],
+            "sources": ["source", "reference", "citation", "data"],
+            "analysis": ["analysis", "interpretation", "evaluation"],
+            "presentation": ["format", "structure", "organization", "clarity"]
+        }
+        suggestion_lower = suggestion.lower()
+        for category, words in keywords.items():
+            if any(word in suggestion_lower for word in words):
+                return category
+        return "methodology"
+
+    async def conduct_research(self, content_plan: str) -> Dict[str, Any]:
+        logger.info(f"Starting research on: {content_plan}")
+
+        # Find relevant stories
+        stories = await self.agents[AgentRole.STORYTELLER].find_stories(content_plan)
+
+        # Generate queries
+        queries = await self.agents[AgentRole.QUERY_SPECIALIST].generate_queries(content_plan)
+
+        # Conduct parallel research
+        findings = []
+
+        # Create tasks for parallel execution
+        tasks = []
+        for query in sorted(queries, key=lambda x: x.priority, reverse=True):
+            if query.agent == AgentRole.WEB_EXPERT:
+                tasks.append(
+                    self.agents[AgentRole.WEB_EXPERT].search_web(query))
+
+        # Execute tasks in parallel
+        results = await asyncio.gather(*tasks)
+
+        # Process results
+        for result in results:
+            if isinstance(result, ResearchFinding):
+                findings.append(result)
+
+        # Verify findings
+        verified_findings = []
+        for finding in findings:
+            verification = await self.agents[AgentRole.FACT_CHECKER].verify_information(finding)
+            if verification['verification_status'] in ['verified', 'partially_verified']:
+                verified_findings.append(finding)
+
+        # Synthesize everything
+        synthesis = await self.agents[AgentRole.SYNTHESIS_EXPERT].synthesize_findings(
+            verified_findings, content_plan, stories
+        )
+
+        # Critique research
+        critique = await self.agents[AgentRole.CRITIC].critique_research(
+            synthesis, verified_findings, stories
+        )
+
+        # Prepare final report
+        report_data = {
+            "content_plan": content_plan,
+            "stories": [s.to_dict() for s in stories],
+            "synthesis": synthesis,
+            "critique": critique,
+            "metadata": {
+                "total_queries": len(queries),
+                "total_findings": len(findings),
+                "verified_findings": len(verified_findings),
+                "total_stories": len(stories),
+                "quality_score": critique['overall_quality']
+            },
+            "sources": [self.sources[s].to_dict() for s in set().union(
+                *[f.sources for f in verified_findings]
+            ) if s in self.sources]
+        }
+
+        logger.info(f"Completed research on: {content_plan}")
+        markdown_report = ReportFormatter.format_markdown_report(report_data)
+
+        return {
+            "json_report": report_data,
+            "markdown_report": markdown_report
+        }
+

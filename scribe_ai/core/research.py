@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from dotenv import load_dotenv
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, fields
 from enum import Enum
 import uuid
@@ -968,3 +968,28 @@ class ReportFormatter:
             logger.error(f"Error formatting markdown report: {str(e)}")
             return f"# Error in Report Generation\n\nAn error occurred: {str(e)}"        
         
+
+class ResearchMemory:
+    """Stores and manages research improvements and lessons learned."""
+    def __init__(self):
+        self.improvements:Dict[str, Set[str]]={
+            'methodology':set(),
+            'sources':set(),
+            'analysis':set(),
+            'presentations':()
+        }
+        self.success_strategies:Dict[str, float]={}
+        self.failed_approaches:Set[str] = set()
+    def add_improvement(self, category:str, suggestion:str):
+        if category in self.improvements:
+            self.improvements[category].add(suggestion)
+    def add_successful_strategy(self, strategy:str, success_rate:float):
+        current_rate = self.success_strategies.get(strategy, 0.0)
+        self.success_strategies[strategy]= 0.7 * success_rate +0.3 * current_rate
+    def add_failed_approach(self, approach:str):
+        self.failed_approaches.add(approach)
+    def get_best_practices(self) -> Dict[str, List[str]]:
+        return {
+            category: sorted(suggestions, key=lambda x: len(x), reverse=True)[:5]
+            for category, suggestions in self.improvements.items()
+        }

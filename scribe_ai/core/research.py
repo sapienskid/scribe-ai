@@ -450,8 +450,8 @@ class SynthesisAgent(BaseAgent):
     def __init__(self, api):
         super().__init__(AgentRole.SYNTHESIS_EXPERT, api)
 
-    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, ) -> Dict[str, Any]:
-        thinking = await self.think(f"Synthesizing {len(findings)} findings for :{content_plan}")
+    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, stories: List[Story]) -> Dict[str, Any]:
+        thinking = await self.think(f"Synthesizing {len(findings)} findings and {len(stories)} stories for :{content_plan}")
         structure = {
             "front_matter": {
                 "title": "",
@@ -519,6 +519,7 @@ Based on this thinking: {thinking}
 Synthesize the following research materials into a comprehensive report:
 content Plan: {content_plan}
 Number of findings: {len(findings)}
+Number of stories: {len(stories)}
 Focus on :
 1. Integrating findings coherently
 2. Highlighting key insights
@@ -605,45 +606,47 @@ class CriticAgent(BaseAgent):
                 return self._validate_critique_format(response)
             if isinstance(response, str):
                 try:
-                    parsed_response =json.loads(response)
+                    parsed_response = json.loads(response)
                     return self._validate_critique_format(parsed_response)
                 except json.JSONDecodeError as e:
-                    logger.error(f"JSON parsing error in critique_research: {str(e)}")
+                    logger.error(
+                        f"JSON parsing error in critique_research: {str(e)}")
                     logger.debug(f"Problematic response: {response}")
                     return self._create_fallback_critique()
             return self._create_fallback_critique()
         except Exception as e:
             logger.error(f"Error in critique_research: {str(e)}")
             return self._create_fallback_critique()
-        
-    def _validate_critique_format(self, critique: Dict[str, Any])-> Dict[str, Any]:
+
+    def _validate_critique_format(self, critique: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and ensure the critique has all required fields."""
-        required_fields ={
+        required_fields = {
             'strengths': List,
             'weaknesses': List,
             'suggestions': List,
             'overall_quality': (int, float)
         }
-        validated={}
+        validated = {}
         for field, expected_type in required_fields.items():
             value = critique.get(field)
             if value is None or not isinstance(value, expected_type):
                 if expected_type == List:
-                    validated[field]=[]
+                    validated[field] = []
                 elif expected_type in (int, float):
-                    validated[field]=5
+                    validated[field] = 5
                 continue
 
             if expected_type == List:
-                validated[field]= [str(item) for item in value if item]
+                validated[field] = [str(item) for item in value if item]
                 if not validated[field]:
-                    validated[field]=["No items provided"]
+                    validated[field] = ["No items provided"]
             elif field == "overall_quality":
-                validated[field]= max(1, min(10, float(value)))
+                validated[field] = max(1, min(10, float(value)))
             else:
-                validated[field]=value
+                validated[field] = value
         return validated
-    def _create_fallback_critique(self)-> Dict[str, Any]:
+
+    def _create_fallback_critique(self) -> Dict[str, Any]:
         """Create a fallback critique structure when normal processing fails."""
         return {
             "strengths": ["Unable to analyze strengths due to processing error"],
@@ -651,5 +654,124 @@ class CriticAgent(BaseAgent):
             "suggestions": ["Retry analysis", "Verify input data format"],
             "overall_quality": 5  # Neutral score when unable to properly evaluate
         }
+
+
+class StoryFinder:
+    def __init__(self, api):
+        self.api = api
+
+    async def find_relevant_stories(self, topic: str) -> List[Story]:
+        prompt = f"""
+        Find compelling true stories related to: {topic}
+
+        Search for stories that:
+        1. Illustrate key aspects of the topic
+        2. Have emotional resonance
+        3. Come from verifiable sources
+        4. Are recent and relevant
+
+        Return exactly 3 stories, each as a complete JSON object with these exact fields:
+        {{
+            "title": "story title",
+            "content": "full story text",
+            "source": "where the story comes from",
+            "relevance_score": 0.9,
+            "emotional_impact": 0.8,
+            "verification_status": "verified",
+            "metadata": {{"key": "value"}},
+            "broader_themes": ["theme1", "theme2"],
+            "narrative_elements": {{
+                "hooks": ["hook1", "hook2"],
+                "key_points": ["point1", "point2"],
+                "suggestions": ["suggestion1", "suggestion2"]
+            }}
+        }}
+
+        Format as a JSON array of exactly 3 story objects. Ensure complete JSON validity.
+        """
+        try:
+            response = await self.api.generate_content(prompt)
+            if isinstance(response, str):
+                try:
+                    stories_data = json.loads(response)
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"JSON parsing error in find_relevant_stories: {str(e)}")
+                    logger.debug(f"Problematic response: {response[:1000]}...")
+                    stories_data = self._create_fallback_stories(topic)
+                else:
+                    stories_data = response
+                if not isinstance(stories_data, list):
+                    logger.error(f"Stories data is not a list")
+                    stories_data = self._create_fallback_stories(topic)
+
+                stories = []
+                valid_fields = {f.name for f in fields[Story]}
+
+                for story_data in stories_data:
+                    try:
+                        processed_data = {
+                            "title": story_data.get("title", "Untitled Story"),
+                            "content": story_data.get("content", "No content available"),
+                            "source": story_data.get("source", "Unknown source"),
+                            "relevance_score": float(story_data.get("relevance_score", 0.5)),
+                            "emotional_impact": float(story_data.get("emotional_impact", 0.5)),
+                            "verification_status": story_data.get("verification_status", "needs_verification"),
+                            "metadata": story_data.get("metadata", {}),
+                            "broader_themes": story_data.get("broader_themes", []),
+                            "narrative_elements": story_data.get("narrative_elements", {
+                                "hooks": [],
+                                "key_points": [],
+                                "suggestions": []
+                            })
+                        }
+                        filtered_data = {
+                            k: v for k, v in processed_data.items() if k in valid_fields
+                        }
+                        story = Story(**filtered_data)
+                        stories.append(story)
+                    except Exception as e:
+                        logger.error(f"Error processing story data: {str(e)}")
+                
+                if not stories:
+                    stories = [self._create_fallback_story(topic)]
+        except Exception as e:
+            logger.error(f"Error in find_relevant_stories: {str(e)}")
+            return [self._create_fallback_story(topic)]
+    def _create_fallback_stories(self, topic: str) -> List[Dict]:
+        """Create fallback story data when normal processing fails."""
+        return [{
+            "title": f"Story about {topic}",
+            "content": f"A story related to {topic} will be available soon.",
+            "source": "System generated",
+            "relevance_score": 0.5,
+            "emotional_impact": 0.5,
+            "verification_status": "needs_verification",
+            "metadata": {"generated": "fallback"},
+            "broader_themes": [topic],
+            "narrative_elements": {
+                "hooks": ["Pending"],
+                "key_points": ["Pending"],
+                "suggestions": ["Pending"]
+            }
+        }]
+    def _create_fallback_story(self, topic: str) -> Story:
+        """Create a single fallback Story instance."""
+        return Story(
+            title=f"Story about {topic}",
+            content=f"A story related to {topic} will be available soon.",
+            source="System generated",
+            relevance_score=0.5,
+            emotional_impact=0.5,
+            verification_status="needs_verification",
+            metadata={"generated": "fallback"},
+            broader_themes=[topic],
+            narrative_elements={
+                "hooks": ["Pending"],
+                "key_points": ["Pending"],
+                "suggestions": ["Pending"]
+            }
+        )
+    
 
 

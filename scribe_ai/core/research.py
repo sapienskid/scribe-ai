@@ -422,31 +422,35 @@ class FactCheckAgent(BaseAgent):
                 max(0.0, min(1.0, result.get("confidence_score", 0.0)))
             ),
             "issues_found": (
-                [str(issue)for issue in result.get("issues_found", [])] if isinstance(result.get("issues_found"), list)else[]
+                [str(issue)for issue in result.get("issues_found", [])] if isinstance(
+                    result.get("issues_found"), list)else []
             ),
-            "suggestions":(
-                [str(sugg)for sugg in result.get("suggestions",[])] if isinstance(result.get("suggestions"),list) else []
+            "suggestions": (
+                [str(sugg)for sugg in result.get("suggestions", [])] if isinstance(
+                    result.get("suggestions"), list) else []
 
             )
 
         }
-        if validated["verification_status"] =="unverified" and not validated["issues_found"]:
-            validated["issues_found"]="Insufficient verification data"
+        if validated["verification_status"] == "unverified" and not validated["issues_found"]:
+            validated["issues_found"] = "Insufficient verification data"
         return validated
-    def _create_fallback_verification(self)->Dict[str, Any]:
+
+    def _create_fallback_verification(self) -> Dict[str, Any]:
         """Create a safe fallback verification result."""
-        return{
-            "verification_status":"unverified",
-            "confidence_score":0.0,
-            "issues_found":["Verification process failed"],
-            "suggestions":["Retry verification", "Check source reliability"]
+        return {
+            "verification_status": "unverified",
+            "confidence_score": 0.0,
+            "issues_found": ["Verification process failed"],
+            "suggestions": ["Retry verification", "Check source reliability"]
         }
+
 
 class SynthesisAgent(BaseAgent):
     def __init__(self, api):
         super().__init__(AgentRole.SYNTHESIS_EXPERT, api)
-    
-    async def synthesize_findings(self, findings:List[ResearchFinding], content_plan:str, stories:List[Story])->Dict[str, Any]:
+
+    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, stories: List[Story]) -> Dict[str, Any]:
         thinking = await self.think(f"Synthesizing {len(findings)} findings and {len(stories)} stories for :{content_plan}")
         structure = {
             "front_matter": {
@@ -510,7 +514,7 @@ class SynthesisAgent(BaseAgent):
                 "additional_analyses": []
             }
         }
-        prompt =f"""
+        prompt = f"""
 Based on this thinking: {thinking}
 Synthesize the following research materials into a comprehensive report:
 content Plan: {content_plan}
@@ -525,7 +529,7 @@ Focus on :
 6. Proper citation of sources
 Return a JSON object matching exactly this structure:
 {json.dumps(structure, indent=2)}
-Ensure all JSON fields are properly formatted and escapted. 
+Ensure all JSON fields are properly formatted and escapted.
 
 """
         try:
@@ -534,27 +538,119 @@ Ensure all JSON fields are properly formatted and escapted.
                 try:
                     synthesis = json.loads(response)
                 except json.JSONDecodeError as e:
-                    logger.error(f"JSON parsing error in synthesize_findings:{str(e)}")
-                    structure["executive_summary"]["abstract"] =f"Error synthesizing findings: {str(e)}"
+                    logger.error(
+                        f"JSON parsing error in synthesize_findings:{str(e)}")
+                    structure["executive_summary"]["abstract"] = f"Error synthesizing findings: {
+                        str(e)}"
                     return structure
-                
+
             else:
                 synthesis = response
-            
+
             for section, template_value in structure.items():
                 if section not in synthesis:
-                    synthesis[section]=template_value
+                    synthesis[section] = template_value
                 elif isinstance(template_value, dict):
                     for subsection, subtemplate in template_value.items():
                         if subsection not in synthesis[section]:
-                            synthesis[section][subsection]=subtemplate
+                            synthesis[section][subsection] = subtemplate
             return synthesis
         except Exception as e:
             logger.error(f"Error in synthesize_findings: {str(e)}")
-            structure['executive_summary']['abstract'] = f"Error synthesizing findings: {str(e)}"
+            structure['executive_summary']['abstract'] = f"Error synthesizing findings: {
+                str(e)}"
             return structure
+
+
+class CriticAgent(BaseAgent):
+    def __init__(self, api):
+        super().__init__(AgentRole.CRITIC, api)
+
+    async def critiqe_research(self, synthesis: Dict[str, Any], findings: List[ResearchFinding], stories: List[Story]) -> Dict[str, Any]:
+        prompt = f"""
+        Critically analyze this research:
+        Synthesis: {json.dumps(synthesis)}
+        Findings: {json.dumps([f.to_dict() for f in findings])}
+        Stories: {json.dumps([s.to_dict() for s in stories])}
+        Evaluate:
+        1. Comprehensiveness of coverage
+        2. Quality of evidence
+        3. Logical consistency
+        4. Potential biases
+        5. Methodological soundness
+
+        Provide constructive criticism and suggestions for improvement.
+
+        Return your analysis in the following exact JSON structure:
+        {{
+            "strengths": [
+                "strength1",
+                "strength2"
+            ],
+            "weaknesses": [
+                "weakness1",
+                "weakness2"
+            ],
+            "suggestions": [
+                "suggestion1",
+                "suggestion2"
+            ],
+            "overall_quality": 8
+        }}
+
+        Ensure your response is valid JSON with proper escaping of special characters.
+"""
+        try:
+            response = await self.api.generate_content(prompt)
+            if isinstance(response, dict):
+                return self._validate_critique_format(response)
+            if isinstance(response, str):
+                try:
+                    parsed_response =json.loads(response)
+                    return self._validate_critique_format(parsed_response)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parsing error in critique_research: {str(e)}")
+                    logger.debug(f"Problematic response: {response}")
+                    return self._create_fallback_critique()
+            return self._create_fallback_critique()
+        except Exception as e:
+            logger.error(f"Error in critique_research: {str(e)}")
+            return self._create_fallback_critique()
         
+    def _validate_critique_format(self, critique: Dict[str, Any])-> Dict[str, Any]:
+        """Validate and ensure the critique has all required fields."""
+        required_fields ={
+            'strengths': List,
+            'weaknesses': List,
+            'suggestions': List,
+            'overall_quality': (int, float)
+        }
+        validated={}
+        for field, expected_type in required_fields.items():
+            value = critique.get(field)
+            if value is None or not isinstance(value, expected_type):
+                if expected_type == List:
+                    validated[field]=[]
+                elif expected_type in (int, float):
+                    validated[field]=5
+                continue
 
-
+            if expected_type == List:
+                validated[field]= [str(item) for item in value if item]
+                if not validated[field]:
+                    validated[field]=["No items provided"]
+            elif field == "overall_quality":
+                validated[field]= max(1, min(10, float(value)))
+            else:
+                validated[field]=value
+        return validated
+    def _create_fallback_critique(self)-> Dict[str, Any]:
+        """Create a fallback critique structure when normal processing fails."""
+        return {
+            "strengths": ["Unable to analyze strengths due to processing error"],
+            "weaknesses": ["Analysis failed - please review raw data"],
+            "suggestions": ["Retry analysis", "Verify input data format"],
+            "overall_quality": 5  # Neutral score when unable to properly evaluate
+        }
 
 

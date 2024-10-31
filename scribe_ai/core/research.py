@@ -774,4 +774,68 @@ class StoryFinder:
         )
     
 
+class StorytellerAgent(BaseAgent):
+    def __init__(self, api):
+        super().__init__(AgentRole.STORYTELLER, api)
+        self.story_finder = StoryFinder(api)
+    
+    async def find_stories(self, topic: str)->List[Story]:
+        thinking = await self.think(f"Finding compelling stories about: {topic}")
+        stories = await self.story_finder.find_relevant_stories(topic)
+        enhanced_stories = []
+        for story in stories:
+            enhancement_prompt = f"""
+            Based on this thinking: {thinking}
+            Analyze and enhance this story:
+            {json.dumps(story.__dict__)}
 
+            1. Verify key facts if possible
+            2. Identify emotional hooks
+            3. Connect to broader themes
+            4. Suggest narrative improvements
+
+            Return enhanced story as JSON with the following structure, ensuring proper JSON formatting:
+            {{
+                "title": "story title",
+                "content": "full story text",
+                "source": "source name",
+                "relevance_score": 0.0-1.0,
+                "emotional_impact": 0.0-1.0,
+                "verification_status": "verified or needs_verification",
+                "metadata": {{}},
+                "broader_themes": ["theme1", "theme2"],
+                "narrative_elements": {{
+                    "hooks": [],
+                    "key_points": [],
+                    "suggestions": []
+                }}
+            }}
+            """
+            try:
+                response = await self.api.generate_content(enhancement_prompt)
+                if isinstance(response, str):
+                    try:
+                        enhanced_story_data = json.loads(response)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON parsing error: {str(e)}")
+                        logger.debug(f"Problematic response: {response}")
+                        enhanced_story_data= story.__dict__
+                else:
+                    enhanced_story_data = response
+                valid_fields = {f.name for f in fields(story)}
+                filtered_data ={
+                    k:v for k, v in enhanced_story_data.items() if k in valid_fields
+                }
+                for field in valid_fields:
+                    if field not in filtered_data:
+                        filtered_data[field]=getattr(story, field)
+                enhanced_story = Story(**filtered_data)
+                enhanced_stories.append(enhanced_story)
+            except Exception as e:
+                logger.error(f"Error enhancing story: {str(e)}")
+                enhanced_stories.append(story)
+            
+        return enhanced_stories
+    
+
+        

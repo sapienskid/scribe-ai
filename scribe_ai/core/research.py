@@ -837,5 +837,134 @@ class StorytellerAgent(BaseAgent):
             
         return enhanced_stories
     
+class ReportFormatter:
+    @staticmethod
+    def format_citation(source:dict)-> str:
+        """Create an APA-style citation from a source dictionary."""
+        try:
+            author = source.get('author')
+            if not author:
+                author ="No author"
+            date = source.get('published_date')
+            year = date.split('-')[0] if date else "n.d."
+            title = source.get('title', '').rstrip('.')
+            url = source.get('url')
+            citation = f"{author} ({year}). {title}"
+            if url:
+                citation+= f". Retrieved from {url}"
+            return citation
+        except Exception as e:
+            logger.error(f"Error formatting citation: {str(e)}")
+            return "Error formatting citation)"
+    
+    @staticmethod
+    def add_intext_citations(text:str, sources:Dict[str, Any])->str:
+        """Add in-text citations with proper APA formatting"""
+        if not text or not sources:
+            return text or ""
+        cited_text=text
+        try:
+            for source_id, source in sources.items():
+                if not sources:
+                    continue
+                author = source.get('author')
+                if not author:
+                    author ="No author"
+                date = source.get('published_date', 'n.d')
+                year = date.split('-')[0] if date else 'n.d'
+                if "," in author:
+                    last_name = author.split(',')[0].strip()
+                else:
+                    last_name = author.split()[-1] if author != "No author" else "No author"
+                citation = f"({last_name}, {year})"
 
+                used_sections = source.get('used_sections', [])
+                for section in used_sections:
+                    if section and section in cited_text and citation not in cited_text:
+                        if section.endswith('.'):
+                            cited_text = cited_text.replace(section, f"{section[:-1]} {citation}")
+                        else:
+                            cited_text = cited_text.replace(section, f"{section} {citation}")
+            return cited_text
+        except Exception as e:
+            logger.error(f"Error adding in-text citations: {str(e)}")
+            return text
+    @staticmethod
+    def format_markdown_report(report_data: Dict[str, Any]) -> str:
+        """Format research report in Markdown with proper citations."""
+        try:
+            md_sections = []
+            synthesis = report_data.get('synthesis', {})
+
+            # Create source lookup
+            sources = {s['id']: s for s in report_data.get(
+                'sources', []) if isinstance(s, dict) and s.get('id')}
+
+            # Front Matter
+            md_sections.extend([
+                "---",
+                f"title: {synthesis.get('title_and_overview', {}).get(
+                    'title', 'Research Report')}",
+                "author: Sabin Pokharel",
+                f"date: {datetime.now().strftime('%B %d, %Y')}",
+                "---\n"
+            ])
+
+            # Executive Summary
+            md_sections.extend([
+                "# Executive Summary\n",
+                ReportFormatter.add_intext_citations(
+                    synthesis.get('title_and_overview', {}
+                                  ).get('abstract', ''),
+                    sources
+                ),
+                "\n"
+            ])
+
+            # Main Sections
+            for section_name, section_content in synthesis.items():
+                if not isinstance(section_content, dict) or section_name == 'title_and_overview':
+                    continue
+
+                md_sections.append(
+                    f"\n# {section_name.replace('_', ' ').title()}\n")
+
+                for subsection_name, subsection_content in section_content.items():
+                    md_sections.append(
+                        f"\n## {subsection_name.replace('_', ' ').title()}\n")
+
+                    if isinstance(subsection_content, str):
+                        content = ReportFormatter.add_intext_citations(
+                            subsection_content, sources)
+                        md_sections.append(content + "\n")
+                    elif isinstance(subsection_content, list):
+                        for item in subsection_content:
+                            if item:
+                                content = ReportFormatter.add_intext_citations(
+                                    str(item), sources)
+                                md_sections.append(f"- {content}\n")
+                    elif isinstance(subsection_content, dict):
+                        for key, value in subsection_content.items():
+                            if value:
+                                content = ReportFormatter.add_intext_citations(
+                                    str(value), sources)
+                                md_sections.append(
+                                    f"### {key.replace('_', ' ').title()}\n{content}\n")
+
+            # References
+            md_sections.extend([
+                "\n# References\n",
+                *[f"- {ReportFormatter.format_citation(source)}\n"
+                  for source in sorted(
+                      sources.values(),
+                      key=lambda s: (
+                          s.get('published_date', 'n.d.'), s.get('title', ''))
+                )]
+            ])
+
+            return "\n".join(md_sections)
+
+        except Exception as e:
+            logger.error(f"Error formatting markdown report: {str(e)}")
+            return f"# Error in Report Generation\n\nAn error occurred: {str(e)}"        
         

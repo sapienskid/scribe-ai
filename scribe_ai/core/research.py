@@ -441,3 +441,120 @@ class FactCheckAgent(BaseAgent):
             "issues_found":["Verification process failed"],
             "suggestions":["Retry verification", "Check source reliability"]
         }
+
+class SynthesisAgent(BaseAgent):
+    def __init__(self, api):
+        super().__init__(AgentRole.SYNTHESIS_EXPERT, api)
+    
+    async def synthesize_findings(self, findings:List[ResearchFinding], content_plan:str, stories:List[Story])->Dict[str, Any]:
+        thinking = await self.think(f"Synthesizing {len(findings)} findings and {len(stories)} stories for :{content_plan}")
+        structure = {
+            "front_matter": {
+                "title": "",
+                "authors": [],
+                "date": "",
+                "keywords": []
+            },
+            "executive_summary": {
+                "abstract": "",
+                "key_findings": [],
+                "significance": ""
+            },
+            "introduction": {
+                "background": "",
+                "objectives": [],
+                "scope": "",
+                "research_questions": []
+            },
+            "literature_review": {
+                "theoretical_framework": "",
+                "previous_research": [],
+                "gaps_identified": []
+            },
+            "methodology": {
+                "research_design": "",
+                "data_collection": {
+                    "methods": [],
+                    "sources": [],
+                    "limitations": []
+                },
+                "analysis_approach": ""
+            },
+            "findings": {
+                "primary_results": [],
+                "thematic_analysis": {
+                    "major_themes": [],
+                    "supporting_evidence": []
+                },
+                "case_studies": [],
+                "data_visualization_notes": []
+            },
+            "discussion": {
+                "interpretation": "",
+                "implications": [],
+                "limitations": [],
+                "future_directions": []
+            },
+            "conclusion": {
+                "summary": "",
+                "recommendations": [],
+                "closing_thoughts": ""
+            },
+            "references": {
+                "citations": [],
+                "additional_resources": []
+            },
+            "appendices": {
+                "supplementary_data": [],
+                "methodological_details": [],
+                "additional_analyses": []
+            }
+        }
+        prompt =f"""
+Based on this thinking: {thinking}
+Synthesize the following research materials into a comprehensive report:
+content Plan: {content_plan}
+Number of findings: {len(findings)}
+Number of stories: {len(stories)}
+Focus on :
+1. Integrating findings coherently
+2. Highlighting key insights
+3. Supporting claims with evidence
+4. Maintaining a logical flow
+5. Ensuring clarity and readability
+6. Proper citation of sources
+Return a JSON object matching exactly this structure:
+{json.dumps(structure, indent=2)}
+Ensure all JSON fields are properly formatted and escapted. 
+
+"""
+        try:
+            response = await self.api.generate_content(prompt)
+            if isinstance(response, str):
+                try:
+                    synthesis = json.loads(response)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parsing error in synthesize_findings:{str(e)}")
+                    structure["executive_summary"]["abstract"] =f"Error synthesizing findings: {str(e)}"
+                    return structure
+                
+            else:
+                synthesis = response
+            
+            for section, template_value in structure.items():
+                if section not in synthesis:
+                    synthesis[section]=template_value
+                elif isinstance(template_value, dict):
+                    for subsection, subtemplate in template_value.items():
+                        if subsection not in synthesis[section]:
+                            synthesis[section][subsection]=subtemplate
+            return synthesis
+        except Exception as e:
+            logger.error(f"Error in synthesize_findings: {str(e)}")
+            structure['executive_summary']['abstract'] = f"Error synthesizing findings: {str(e)}"
+            return structure
+        
+
+
+
+

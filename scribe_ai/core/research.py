@@ -450,8 +450,8 @@ class SynthesisAgent(BaseAgent):
     def __init__(self, api):
         super().__init__(AgentRole.SYNTHESIS_EXPERT, api)
 
-    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, stories: List[Story]) -> Dict[str, Any]:
-        thinking = await self.think(f"Synthesizing {len(findings)} findings and {len(stories)} stories for :{content_plan}")
+    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, ) -> Dict[str, Any]:
+        thinking = await self.think(f"Synthesizing {len(findings)} findings for :{content_plan}")
         structure = {
             "front_matter": {
                 "title": "",
@@ -519,7 +519,6 @@ Based on this thinking: {thinking}
 Synthesize the following research materials into a comprehensive report:
 content Plan: {content_plan}
 Number of findings: {len(findings)}
-Number of stories: {len(stories)}
 Focus on :
 1. Integrating findings coherently
 2. Highlighting key insights

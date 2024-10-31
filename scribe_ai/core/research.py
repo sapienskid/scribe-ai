@@ -229,7 +229,7 @@ class WebResearchAgent(BaseAgent):
     def __init__(self, api, rate_limiter):
         super().__init__(AgentRole.WEB_EXPERT, api, rate_limiter)
         self.orchestrator = None  # Initialize orchestrator reference
-        
+
     def set_orchestrator(self, orchestrator):
         self.orchestrator = orchestrator
 
@@ -237,7 +237,7 @@ class WebResearchAgent(BaseAgent):
         tavily_data = await self._search_tavily(query.text)
         sources = []
         urls = []  # Track URLs separately
-        
+
         if tavily_data and 'results' in tavily_data:
             for result in tavily_data['results']:
                 try:
@@ -248,18 +248,19 @@ class WebResearchAgent(BaseAgent):
                         author=result.get('author'),
                         published_date=result.get('published_date')
                     )
-                    
+
                     if source.url and source.content:
                         if hasattr(self, 'orchestrator') and self.orchestrator is not None:
                             self.orchestrator.sources[source.id] = source
                             sources.append(source.id)
                             urls.append(source.url)
                         else:
-                            logger.warning("Orchestrator not properly initialized")
+                            logger.warning(
+                                "Orchestrator not properly initialized")
                 except Exception as e:
                     logger.error(f"Error processing source: {str(e)}")
                     continue
-        
+
         if not sources:
             logger.warning("No valid sources found for query: " + query.text)
             error_response = {
@@ -276,9 +277,9 @@ class WebResearchAgent(BaseAgent):
 
         prompt = f"""
         Analyze these web search results for the query: {query.text}
-        
+
         Results: {json.dumps(tavily_data)}
-        
+
         Provide analysis in the following exact JSON format:
         {{
             "content": "main findings with source references",
@@ -289,12 +290,12 @@ class WebResearchAgent(BaseAgent):
                 "source_credibility": "evaluation of source reliability and authority"
             }}
         }}
-        
+
         Ensure the response maintains this exact JSON structure.
         The confidence score must be between 0 and 1.
         Include source references in the content using URLs where relevant.
         """
-        
+
         try:
             response = await self.api.generate_content(prompt)
             # Handle both string and direct JSON responses
@@ -304,15 +305,16 @@ class WebResearchAgent(BaseAgent):
                 analysis = response
             else:
                 raise ValueError("Unexpected response format")
-            
+
             # Validate required fields
-            required_fields = ['content', 'sources', 'urls', 'confidence', 'metadata']
+            required_fields = ['content', 'sources',
+                               'urls', 'confidence', 'metadata']
             if not all(field in analysis for field in required_fields):
                 raise ValueError("Missing required fields in analysis")
-            
+
             # Ensure proper typing
             analysis['confidence'] = float(analysis.get('confidence', 0.0))
-            
+
         except Exception as e:
             logger.error(f"Error generating analysis: {str(e)}")
             analysis = {
@@ -326,21 +328,22 @@ class WebResearchAgent(BaseAgent):
                 }
             }
         return ResearchFinding(
-            query=query, 
+            query=query,
             content=analysis["content"],
-            sources=sources, 
+            sources=sources,
             urls=urls,
             confidence=analysis['confidenc'],
             agent=self.role,
             metadata=analysis['metadata']
         )
-    async def _search_tavily(self, query:str)->Dict[str, Any]:
+
+    async def _search_tavily(self, query: str) -> Dict[str, Any]:
         async with aiohttp.ClientSession() as session:
             await self.rate_limiter.wait()
             url = "https://api.tavily.com/search"
             params = {
                 "api_key": TAVILY_API_KEY,
-                "query": query, 
+                "query": query,
                 "search_depth": "advanced",
                 'include_image': False,
                 'include_answer': True,
@@ -353,9 +356,88 @@ class WebResearchAgent(BaseAgent):
                         return await response.json()
                     else:
                         logger.error(f"Tavily API error: {response.status}")
-                        return{"error":f"API returned status {response.status}", "results":[]}
+                        return {"error": f"API returned status {response.status}", "results": []}
             except Exception as e:
                 logger.error(f"Tavily API request failed: {str(e)}")
-                return {"error":str(e), "results":[]}
+                return {"error": str(e), "results": []}
 
-        
+
+class FactCheckAgent(BaseAgent):
+    def __init__(self, api):
+        super().__init__(AgentRole.FACT_CHECKER, api)
+
+    async def verify_information(self, finding: ResearchFinding) -> Dict[str, Any]:
+        finding_str = (
+            f"Content: {finding.content}\n"
+            f"Sources: {', '.join(finding.sources)}\n"
+            f"Confidence: {finding.confidence}"
+
+        )
+        prompt = f"""
+        Fact check this research finding:
+        {finding_str}
+
+        Verify:
+        1. Consistency across sources
+        2. Potential biases
+        3. Currency of information
+        4. Credibility of sources
+        5. Logical consistency
+
+        Return a JSON object with this exact format:
+        {{
+            "verification_status": "verified|partially_verified|unverified",
+            "confidence_score": 0.0,
+            "issues_found": [],
+            "suggestions": []
+        }}
+        """
+        try:
+            response = await self.api.generate_content(prompt)
+            if isinstance(response, dict):
+                result = self._validate_verification_result(response)
+            elif isinstance(response, str):
+                try:
+                    parsed = json.loads(response)
+                    result = self._validate_verification_result(response)
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"JSON parsing error in verify_information: {str(e)}")
+                    result = self._create_fallback_verification()
+            else:
+                logger.error(f"Unexpected response type: {type(response)}")
+                result = self._create_fallback_verification()
+
+            return result
+        except Exception as e:
+            logger.error(f"Error in verify_information: {str(e)}")
+            return self._create_fallback_verification()
+
+    def _validate_verification_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and normalize verification result."""
+        valid_statuses = {"verified", "partially_verified", "unverified"}
+        validated = {
+            "verification_status": (result.get("verification_status") if result.get("verification_status") in valid_statuses else "unverified"),
+            "confidence_score": float(
+                max(0.0, min(1.0, result.get("confidence_score", 0.0)))
+            ),
+            "issues_found": (
+                [str(issue)for issue in result.get("issues_found", [])] if isinstance(result.get("issues_found"), list)else[]
+            ),
+            "suggestions":(
+                [str(sugg)for sugg in result.get("suggestions",[])] if isinstance(result.get("suggestions"),list) else []
+
+            )
+
+        }
+        if validated["verification_status"] =="unverified" and not validated["issues_found"]:
+            validated["issues_found"]="Insufficient verification data"
+        return validated
+    def _create_fallback_verification(self)->Dict[str, Any]:
+        """Create a safe fallback verification result."""
+        return{
+            "verification_status":"unverified",
+            "confidence_score":0.0,
+            "issues_found":["Verification process failed"],
+            "suggestions":["Retry verification", "Check source reliability"]
+        }

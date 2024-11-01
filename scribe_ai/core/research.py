@@ -1169,11 +1169,6 @@ class ResearchImprover:
         response = await self.orchestrator.api.generate_content(prompt)
         return json.loads(response) if isinstance(response, str) else response
     
-
-
-
-
-
 class ResearchOrchestrator:
     def __init__(self, rate_limiter, api):
         self.api = api
@@ -1191,40 +1186,11 @@ class ResearchOrchestrator:
             self.agents[AgentRole.WEB_EXPERT],
             self.agents[AgentRole.FACT_CHECKER]
         )
+        self.improver = ResearchImprover(self)
         for agent in self.agents.values():
             if isinstance(agent, WebResearchAgent):
                 agent.set_orchestrator(self)
 
-    def _apply_improvements(self, synthesis: Dict[str, Any], critique: Dict[str, Any]) -> Dict[str, Any]:
-        """Applies improvement based on the critique and stored memory."""
-        for suggestion in critique ["suggestions"]:
-            category = self._categorize_suggestion(suggestion)
-            self.memory.add_improvement(category, suggestion)
-
-        best_practices = self.memory.get_best_practices()
-        improved_synthesis = synthesis.copy()
-        if "methodology" in improved_synthesis:
-            methods = improved_synthesis("methodology")
-            if isinstance(methods, dict):
-                methods["improvements_applied"] = best_practices["methodology"]
-        if "findings" in improved_synthesis:
-            findings = improved_synthesis["findings"]
-            if isinstance(findings, dict):
-                findings["methodology_notes"] = best_practices["analysis"]
-        return improved_synthesis
-    def _categorize_suggestion(self, suggestion:str)->str:
-        """Categorizes improvement suggestions into predefined categories"""
-        keywords = {
-            "methodology": ["method", "approach", "process", "procedure"],
-            "sources": ["source", "reference", "citation", "data"],
-            "analysis": ["analysis", "interpretation", "evaluation"],
-            "presentation": ["format", "structure", "organization", "clarity"]
-        }
-        suggestion_lower = suggestion.lower()
-        for category, words in keywords.items():
-            if any(word in suggestion_lower for word in words):
-                return category
-        return "methodology"
 
     async def conduct_research(self, content_plan: str) -> Dict[str, Any]:
         logger.info(f"Starting research on: {content_plan}")
@@ -1269,19 +1235,27 @@ class ResearchOrchestrator:
         critique = await self.agents[AgentRole.CRITIC].critique_research(
             synthesis, verified_findings, stories
         )
+        improved_synthesis, final_critique = await self.improver.improve_research(
+            synthesis, critique, verified_findings, stories, content_plan
+        )
 
         # Prepare final report
         report_data = {
             "content_plan": content_plan,
             "stories": [s.to_dict() for s in stories],
-            "synthesis": synthesis,
-            "critique": critique,
+            "synthesis": improved_synthesis,
+            "critique": final_critique,
+            "improvement_history": {
+                "initial_quality": critique['overall_quality'],
+                "final_quality": final_critique['overall_quality'],
+                "improvements_made": [s for s in final_critique.get('strengths', [])
+                                    if s not in critique.get('strengths', [])]
+            },
             "metadata": {
                 "total_queries": len(queries),
-                "total_findings": len(findings),
-                "verified_findings": len(verified_findings),
+                "total_findings": len(verified_findings),
                 "total_stories": len(stories),
-                "quality_score": critique['overall_quality']
+                "quality_score": final_critique['overall_quality']
             },
             "sources": [self.sources[s].to_dict() for s in set().union(
                 *[f.sources for f in verified_findings]

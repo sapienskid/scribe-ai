@@ -87,4 +87,13 @@ class ContentPlan:
             required_expertise=["Topic knowledge", "Content writing"],
             content_goals=["Inform readers", "Provide clear explanation"]
         )
-            
+@dataclass
+class Citation:
+    source:str
+    url:Optional[str]
+    author: Optional[str]
+    date: Optional[str]
+    quote: Optional[str]
+    context: str
+    reference_id: str
+    

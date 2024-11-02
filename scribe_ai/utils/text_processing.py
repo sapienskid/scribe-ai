@@ -15,11 +15,6 @@ class SafetySetting:
     category: str
     threshold: str
 
-@dataclass
-class GroundingConfig:
-    mode: str = 'unspecified'
-    dynamic_threshold: float = 0.06
-
 class APIConfigurationError(Exception):
     """Custom exception for API configuration errors."""
     pass
@@ -27,11 +22,6 @@ class APIConfigurationError(Exception):
 class SystemInstructionError(Exception):
     """Custom exception for system instruction related errors."""
     pass
-
-class GroundingError(Exception):
-    """Custom exception for grounding related errors."""
-    pass
-
 
 def configure_api() -> None:
     """Configure the Gemini API with the current API key."""
@@ -52,17 +42,13 @@ class GeminiAPI:
         SafetySetting("HARM_CATEGORY_SEXUALLY_EXPLICIT", "BLOCK_ONLY_HIGH"),
         SafetySetting("HARM_CATEGORY_DANGEROUS_CONTENT", "BLOCK_ONLY_HIGH")
     ]
-    DEFAULT_GROUNDING_CONFIG = GroundingConfig()
 
-
-    def __init__(self, use_json: bool = False, use_grounding: bool = False, grounding_config: Optional[GroundingConfig]=None) -> None:
+    def __init__(self, use_json: bool = False) -> None:
         """
         Initialize the GeminiAPI instance.
         
         Args:
             use_json (bool): Whether to return responses as JSON
-            use_grounding (bool): Whether to enable Google Search grounding
-            grounding_config (Optional[GroundingConfig]): Custom grounding configuration
         """
         self.generation_config = {
             "temperature": api_parameters["temperature"],
@@ -76,8 +62,6 @@ class GeminiAPI:
             {"category": setting.category, "threshold": setting.threshold}
             for setting in self.DEFAULT_SAFETY_SETTINGS
         ]
-        self.use_grounding = use_grounding
-        self.grounding_config = grounding_config or self.DEFAULT_GROUNDING_CONFIG
         
         self.model = self._initialize_model()
         self.chat_session = None
@@ -89,66 +73,12 @@ class GeminiAPI:
 
     def _initialize_model(self) -> genai.GenerativeModel:
         """Initialize and return a new GenerativeModel instance."""
-        model_params = {
-            "model_name": "gemini-1.5-flash" if self.use_grounding else "gemini-1.5-flash",
-            "generation_config": self.generation_config,
-            "safety_settings": self.safety_settings
-        }
+        return genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config=self.generation_config,
+            safety_settings=self.safety_settings
+        )
 
-        if self.use_grounding:
-            model_params["tools"] = {
-                "google_search_retrieval": {
-                    "dynamic_retrieval_config": {
-                        "mode": self.grounding_config.mode,
-                        "dynamic_threshold": self.grounding_config.dynamic_threshold
-                    }
-                }
-            }
-
-        return genai.GenerativeModel(**model_params)
-
-    def _process_grounded_response(self, response: Any) -> Dict[str, Any]:
-        """
-        Process and extract information from a grounded response.
-        
-        Args:
-            response: The raw response from the Gemini API
-            
-        Returns:
-            Dict containing the processed response with grounding information
-        """
-        try:
-            result = {
-                "content": response.text,
-                "grounding_info": {}
-            }
-
-            if hasattr(response, "candidates") and response.candidates:
-                candidate = response.candidates[0]
-                if hasattr(candidate, "groundingMetadata"):
-                    metadata = candidate.groundingMetadata
-                    result["grounding_info"] = {
-                        "search_queries": metadata.get("webSearchQueries", []),
-                        "sources": [
-                            {
-                                "uri": chunk.web.uri,
-                                "title": chunk.web.title
-                            }
-                            for chunk in metadata.get("groundingChunks", [])
-                        ],
-                        "supports": [
-                            {
-                                "text": support.segment.text,
-                                "confidence": max(support.confidenceScores) if support.confidenceScores else None
-                            }
-                            for support in metadata.get("groundingSupports", [])
-                        ]
-                    }
-
-            return result
-        except Exception as e:
-            logger.error(f"Error processing grounded response: {str(e)}")
-            raise GroundingError(f"Failed to process grounded response: {str(e)}")        
     def _validate_system_instruction(self, instruction: str) -> None:
         """
         Validate the system instruction format and content.
@@ -218,7 +148,7 @@ class GeminiAPI:
             prompt (str): The user prompt
             
         Returns:
-            Optional[Any]: The generated content, with grounding information if enabled
+            Optional[Any]: The generated content, either as text or JSON
         """
         try:
             formatted_prompt = f"Human: {prompt}"
@@ -232,54 +162,27 @@ class GeminiAPI:
                 "role": "user",
                 "content": prompt
             })
+            self.chat_history.append({
+                "role": "assistant",
+                "content": response.text
+            })
             
-            # Process response based on configuration
-            if self.use_grounding:
-                processed_response = self._process_grounded_response(response)
-                self.chat_history.append({
-                    "role": "assistant",
-                    "content": processed_response["content"],
-                    "grounding_info": processed_response["grounding_info"]
-                })
-                return processed_response
-            else:
-                self.chat_history.append({
-                    "role": "assistant",
-                    "content": response.text
-                })
-                if self.generation_config["response_mime_type"] == "application/json":
-                    try:
-                        return json.loads(response.text)
-                    except json.JSONDecodeError as json_error:
-                        logger.error(f"JSON decode error: {str(json_error)}")
-                        logger.error(f"Raw response: {response.text[:1000]}...")
-                        return response.text
-                return response.text
+            if self.generation_config["response_mime_type"] == "application/json":
+                try:
+                    return json.loads(response.text)
+                except json.JSONDecodeError as json_error:
+                    logger.error(f"JSON decode error: {str(json_error)}")
+                    logger.error(f"Raw response: {response.text[:1000]}...")
+                    return response.text
+            return response.text
             
         except google.api_core.exceptions.ResourceExhausted:
             logger.error("API key exhausted. Switching to next key.")
             self.switch_and_reconfigure()
-            return await self.generate_content(prompt)
+            return await self.generate_content(prompt)  # Retry with new key
         except Exception as e:
             logger.error(f"An error occurred while generating content: {str(e)}")
             return None
-    def enable_grounding(self, config: Optional[GroundingConfig] = None) -> None:
-        """
-        Enable Google Search grounding with optional custom configuration.
-        
-        Args:
-            config (Optional[GroundingConfig]): Custom grounding configuration
-        """
-        self.use_grounding = True
-        if config:
-            self.grounding_config = config
-        self.model = self._initialize_model()
-        self.reset_chat()
-    def disable_grounding(self) -> None:
-        """Disable Google Search grounding."""
-        self.use_grounding = False
-        self.model = self._initialize_model()
-        self.reset_chat()
 
     def reset_chat(self) -> None:
         """Reset the chat session and initialize with system instruction if present."""

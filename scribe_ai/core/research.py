@@ -9,6 +9,10 @@ from enum import Enum
 import uuid
 from datetime import datetime
 import asyncio
+from scribe_ai.utils.text_processing import GeminiAPI
+from scribe_ai.utils.rate_limiter import RateLimiter
+rate_limiter =RateLimiter(15, 60)
+api = GeminiAPI(use_json=True)
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -38,23 +42,8 @@ class AgentRole(Enum):
     SYNTHESIS_EXPERT = "Information Synthesis Expert"
     WEB_EXPERT = "Web Research Specialist"
     CRITIC = "Critical Analysis Specialist"
-    STORYTELLER = "Narrative Specialist"
 
 
-@dataclass
-class Story:
-    title: str
-    content: str
-    source: str
-    relevance_score: float
-    emotional_impact: float
-    verification_status: str
-    metadata: Dict[str, Any]
-    border_themes: Optional[List[str]] = None
-    narrative_elements: Optional[Dict[str, Any]] = None
-
-    def to_dict(self):
-        return dataclass_to_dict(self)
 
 
 @dataclass
@@ -84,8 +73,6 @@ class ResearchFinding:
     confidence: float
     agent: AgentRole
     metadata: Dict[str, Any] = None
-    stories: List[Story] = None
-
     def to_dict(self):
         return {
             "query": self.query.to_dict(),
@@ -95,7 +82,6 @@ class ResearchFinding:
             "confidence": self.confidence,
             "agent": self.agent.value,
             "metadata": self.metadata,
-            "stories": [story.to_dict() for story in self.stories]
         }
 
 
@@ -105,10 +91,12 @@ class Source:
         self.url = url
         self.title = title
         self.content = content
+        self.author = author # Add this line
         self.published_date = published_date
         self.used_sections = []
         self.credibility_score = 0.0
         self.verification_status = None
+
 
     def add_used_section(self, section: str):
         if section not in self.used_sections:
@@ -333,7 +321,7 @@ class WebResearchAgent(BaseAgent):
             content=analysis["content"],
             sources=sources,
             urls=urls,
-            confidence=analysis['confidenc'],
+            confidence=analysis['confidence'],
             agent=self.role,
             metadata=analysis['metadata']
         )
@@ -451,8 +439,8 @@ class SynthesisAgent(BaseAgent):
     def __init__(self, api):
         super().__init__(AgentRole.SYNTHESIS_EXPERT, api)
 
-    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, stories: List[Story]) -> Dict[str, Any]:
-        thinking = await self.think(f"Synthesizing {len(findings)} findings and {len(stories)} stories for :{content_plan}")
+    async def synthesize_findings(self, findings: List[ResearchFinding], content_plan: str, ) -> Dict[str, Any]:
+        thinking = await self.think(f"Synthesizing {len(findings)} findings  :{content_plan}")
         structure = {
             "front_matter": {
                 "title": "",
@@ -520,7 +508,6 @@ Based on this thinking: {thinking}
 Synthesize the following research materials into a comprehensive report:
 content Plan: {content_plan}
 Number of findings: {len(findings)}
-Number of stories: {len(stories)}
 Focus on :
 1. Integrating findings coherently
 2. Highlighting key insights
@@ -567,12 +554,11 @@ class CriticAgent(BaseAgent):
     def __init__(self, api):
         super().__init__(AgentRole.CRITIC, api)
 
-    async def critiqe_research(self, synthesis: Dict[str, Any], findings: List[ResearchFinding], stories: List[Story]) -> Dict[str, Any]:
+    async def critiqe_research(self, synthesis: Dict[str, Any], findings: List[ResearchFinding]) -> Dict[str, Any]:
         prompt = f"""
         Critically analyze this research:
         Synthesis: {json.dumps(synthesis)}
         Findings: {json.dumps([f.to_dict() for f in findings])}
-        Stories: {json.dumps([s.to_dict() for s in stories])}
         Evaluate:
         1. Comprehensiveness of coverage
         2. Quality of evidence
@@ -657,122 +643,6 @@ class CriticAgent(BaseAgent):
         }
 
 
-class StoryFinder:
-    def __init__(self, api):
-        self.api = api
-
-    async def find_relevant_stories(self, topic: str) -> List[Story]:
-        prompt = f"""
-        Find compelling true stories related to: {topic}
-
-        Search for stories that:
-        1. Illustrate key aspects of the topic
-        2. Have emotional resonance
-        3. Come from verifiable sources
-        4. Are recent and relevant
-
-        Return exactly 3 stories, each as a complete JSON object with these exact fields:
-        {{
-            "title": "story title",
-            "content": "full story text",
-            "source": "where the story comes from",
-            "relevance_score": 0.9,
-            "emotional_impact": 0.8,
-            "verification_status": "verified",
-            "metadata": {{"key": "value"}},
-            "broader_themes": ["theme1", "theme2"],
-            "narrative_elements": {{
-                "hooks": ["hook1", "hook2"],
-                "key_points": ["point1", "point2"],
-                "suggestions": ["suggestion1", "suggestion2"]
-            }}
-        }}
-
-        Format as a JSON array of exactly 3 story objects. Ensure complete JSON validity.
-        """
-        try:
-            response = await self.api.generate_content(prompt)
-            if isinstance(response, str):
-                try:
-                    stories_data = json.loads(response)
-                except json.JSONDecodeError as e:
-                    logger.error(
-                        f"JSON parsing error in find_relevant_stories: {str(e)}")
-                    logger.debug(f"Problematic response: {response[:1000]}...")
-                    stories_data = self._create_fallback_stories(topic)
-                else:
-                    stories_data = response
-                if not isinstance(stories_data, list):
-                    logger.error(f"Stories data is not a list")
-                    stories_data = self._create_fallback_stories(topic)
-
-                stories = []
-                valid_fields = {f.name for f in fields[Story]}
-
-                for story_data in stories_data:
-                    try:
-                        processed_data = {
-                            "title": story_data.get("title", "Untitled Story"),
-                            "content": story_data.get("content", "No content available"),
-                            "source": story_data.get("source", "Unknown source"),
-                            "relevance_score": float(story_data.get("relevance_score", 0.5)),
-                            "emotional_impact": float(story_data.get("emotional_impact", 0.5)),
-                            "verification_status": story_data.get("verification_status", "needs_verification"),
-                            "metadata": story_data.get("metadata", {}),
-                            "broader_themes": story_data.get("broader_themes", []),
-                            "narrative_elements": story_data.get("narrative_elements", {
-                                "hooks": [],
-                                "key_points": [],
-                                "suggestions": []
-                            })
-                        }
-                        filtered_data = {
-                            k: v for k, v in processed_data.items() if k in valid_fields
-                        }
-                        story = Story(**filtered_data)
-                        stories.append(story)
-                    except Exception as e:
-                        logger.error(f"Error processing story data: {str(e)}")
-                
-                if not stories:
-                    stories = [self._create_fallback_story(topic)]
-        except Exception as e:
-            logger.error(f"Error in find_relevant_stories: {str(e)}")
-            return [self._create_fallback_story(topic)]
-    def _create_fallback_stories(self, topic: str) -> List[Dict]:
-        """Create fallback story data when normal processing fails."""
-        return [{
-            "title": f"Story about {topic}",
-            "content": f"A story related to {topic} will be available soon.",
-            "source": "System generated",
-            "relevance_score": 0.5,
-            "emotional_impact": 0.5,
-            "verification_status": "needs_verification",
-            "metadata": {"generated": "fallback"},
-            "broader_themes": [topic],
-            "narrative_elements": {
-                "hooks": ["Pending"],
-                "key_points": ["Pending"],
-                "suggestions": ["Pending"]
-            }
-        }]
-    def _create_fallback_story(self, topic: str) -> Story:
-        """Create a single fallback Story instance."""
-        return Story(
-            title=f"Story about {topic}",
-            content=f"A story related to {topic} will be available soon.",
-            source="System generated",
-            relevance_score=0.5,
-            emotional_impact=0.5,
-            verification_status="needs_verification",
-            metadata={"generated": "fallback"},
-            broader_themes=[topic],
-            narrative_elements={
-                "hooks": ["Pending"],
-                "key_points": ["Pending"],
-                "suggestions": ["Pending"]
-            }
-        )
 class QuestionAnswering:
     """Handles direct question answering with source attribution,"""
     def __init__(self, web_research:WebResearchAgent, fact_checker:FactCheckAgent):
@@ -846,69 +716,6 @@ class QuestionAnswering:
             }
       
 
-class StorytellerAgent(BaseAgent):
-    def __init__(self, api):
-        super().__init__(AgentRole.STORYTELLER, api)
-        self.story_finder = StoryFinder(api)
-    
-    async def find_stories(self, topic: str)->List[Story]:
-        thinking = await self.think(f"Finding compelling stories about: {topic}")
-        stories = await self.story_finder.find_relevant_stories(topic)
-        enhanced_stories = []
-        for story in stories:
-            enhancement_prompt = f"""
-            Based on this thinking: {thinking}
-            Analyze and enhance this story:
-            {json.dumps(story.__dict__)}
-
-            1. Verify key facts if possible
-            2. Identify emotional hooks
-            3. Connect to broader themes
-            4. Suggest narrative improvements
-
-            Return enhanced story as JSON with the following structure, ensuring proper JSON formatting:
-            {{
-                "title": "story title",
-                "content": "full story text",
-                "source": "source name",
-                "relevance_score": 0.0-1.0,
-                "emotional_impact": 0.0-1.0,
-                "verification_status": "verified or needs_verification",
-                "metadata": {{}},
-                "broader_themes": ["theme1", "theme2"],
-                "narrative_elements": {{
-                    "hooks": [],
-                    "key_points": [],
-                    "suggestions": []
-                }}
-            }}
-            """
-            try:
-                response = await self.api.generate_content(enhancement_prompt)
-                if isinstance(response, str):
-                    try:
-                        enhanced_story_data = json.loads(response)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON parsing error: {str(e)}")
-                        logger.debug(f"Problematic response: {response}")
-                        enhanced_story_data= story.__dict__
-                else:
-                    enhanced_story_data = response
-                valid_fields = {f.name for f in fields(story)}
-                filtered_data ={
-                    k:v for k, v in enhanced_story_data.items() if k in valid_fields
-                }
-                for field in valid_fields:
-                    if field not in filtered_data:
-                        filtered_data[field]=getattr(story, field)
-                enhanced_story = Story(**filtered_data)
-                enhanced_stories.append(enhanced_story)
-            except Exception as e:
-                logger.error(f"Error enhancing story: {str(e)}")
-                enhanced_stories.append(story)
-            
-        return enhanced_stories
-    
 class ReportFormatter:
     @staticmethod
     def format_citation(source:dict)-> str:
@@ -1043,111 +850,167 @@ class ReportFormatter:
 class ResearchImprover:
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
-        self.improvement_threshold =8.0
-        self.max_iterations =3
-    async def improve_research(self, synthesis: Dict[str, Any], critique: Dict[str, Any], findings:List[ResearchFinding], stories:List[Story], content_plan:str)->Tuple[Dict[str, Any], Dict[str, Any]]:
+        self.improvement_threshold = 8.0
+        self.max_iterations = 3
+
+    async def improve_research(self, synthesis: Dict[str, Any], critique: Dict[str, Any], findings: List[ResearchFinding], content_plan: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Iteratively improve research based on critique feedback. Returns improved synthesis and critique."""
         current_synthesis = synthesis
         current_critique = critique
-        iteration =0
-        while (current_critique['overal_quality']< self.improvement_threshold and iteration<self.max_iterations):
+        iteration = 0
+        
+        while (current_critique['overall_quality'] < self.improvement_threshold and iteration < self.max_iterations):
             improvement_plan = await self._create_improvement_plan(current_critique)
             new_findings = await self._conduct_additional_research(
                 improvement_plan, content_plan, findings
             )
             findings.extend(new_findings)
-            if 'narrative_gaps' in improvement_plan:
-                new_stories = await self._find_additional_stories(
-                    improvement_plan['narrative_gaps'], content_plan
-                )
-                stories.extend(new_stories)
             current_synthesis = await self._improve_synthesis(
-                current_synthesis, improvement_plan, findings, stories
+                current_synthesis, improvement_plan, findings
             )
-            current_critique = await self._improve_synthesis(
-                current_synthesis, improvement_plan, findings, stories
+            current_critique = await self.orchestrator.agents[AgentRole.CRITIC].critiqe_research(
+                current_synthesis, findings
             )
-            iteration +=1
+            iteration += 1
+            
         return current_synthesis, current_critique
-    
-    async def _create_improvement_plan(self, critique:Dict[str, Any])-> Dict[str, Any]:
-        """Generate a structured improvement plan based on the critique"""
-        prompt = f"""
-        Analyze this critique and create a specific improvement plan:
-        {json.dumps(critique)}
 
-        Create a detailed plan with these exact sections in JSON format:
-        {{
+    async def _create_improvement_plan(self, critique: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a structured improvement plan based on the critique"""
+        try:
+            prompt = {
+                "role": "research_improver",
+                "critique": critique,
+                "task": "create_improvement_plan",
+                "format_instructions": {
+                    "research_gaps": [
+                        {
+                            "topic": "string - specific topic needing more research",
+                            "reason": "string - why this needs more research",
+                            "suggested_queries": ["string - query1", "string - query2"]
+                        }
+                    ],
+                    "narrative_gaps": [
+                        {
+                            "theme": "string - theme needing better coverage",
+                            "requirements": ["string - requirement1", "string - requirement2"]
+                        }
+                    ],
+                    "synthesis_improvements": [
+                        {
+                            "section": "string - section name",
+                            "issue": "string - what needs improvement",
+                            "suggestions": ["string - suggestion1", "string - suggestion2"]
+                        }
+                    ],
+                    "verification_needs": [
+                        {
+                            "claim": "string - claim needing verification",
+                            "verification_approach": "string - suggested approach"
+                        }
+                    ]
+                }
+            }
+
+            response = await self.orchestrator.api.generate_content(json.dumps(prompt))
+            
+            # Handle both string and dict responses
+            if isinstance(response, str):
+                try:
+                    parsed_response = json.loads(response)
+                    return self._validate_improvement_plan(parsed_response)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parsing error in _create_improvement_plan: {str(e)}")
+                    return self._create_fallback_plan()
+            elif isinstance(response, dict):
+                return self._validate_improvement_plan(response)
+            else:
+                logger.error(f"Unexpected response type: {type(response)}")
+                return self._create_fallback_plan()
+                
+        except Exception as e:
+            logger.error(f"Error in _create_improvement_plan: {str(e)}")
+            return self._create_fallback_plan()
+
+    def _validate_improvement_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and ensure the improvement plan has all required fields."""
+        required_sections = ['research_gaps', 'narrative_gaps', 'synthesis_improvements', 'verification_needs']
+        validated_plan = {}
+        
+        for section in required_sections:
+            if section not in plan or not isinstance(plan[section], list):
+                validated_plan[section] = []
+            else:
+                validated_plan[section] = plan[section]
+                
+        return validated_plan
+
+    def _create_fallback_plan(self) -> Dict[str, Any]:
+        """Create a basic improvement plan when normal processing fails."""
+        return {
             "research_gaps": [
-                {{
-                    "topic": "specific topic needing more research",
-                    "reason": "why this needs more research",
-                    "suggested_queries": ["query1", "query2"]
-                }}
+                {
+                    "topic": "general verification",
+                    "reason": "ensure baseline coverage",
+                    "suggested_queries": ["verify main claims", "check primary sources"]
+                }
             ],
             "narrative_gaps": [
-                {{
-                    "theme": "theme needing better story coverage",
-                    "requirements": ["requirement1", "requirement2"]
-                }}
+                {
+                    "theme": "basic structure",
+                    "requirements": ["ensure logical flow", "check completeness"]
+                }
             ],
             "synthesis_improvements": [
-                {{
-                    "section": "section name",
-                    "issue": "what needs improvement",
-                    "suggestions": ["suggestion1", "suggestion2"]
-                }}
+                {
+                    "section": "overall",
+                    "issue": "review needed",
+                    "suggestions": ["verify all sections", "check coherence"]
+                }
             ],
             "verification_needs": [
-                {{
-                    "claim": "claim needing verification",
-                    "verification_approach": "suggested approach"
-                }}
+                {
+                    "claim": "general verification",
+                    "verification_approach": "basic fact checking"
+                }
             ]
-        }}
-        """
-        response = await self.orchestrator.api.generate_content(prompt)
-        return json.loads(response) if isinstance(response, str) else response
-    async def _conduct_additional_research(self, improvement_plan:Dict[str, Any])-> List[ResearchFinding]:
+        }
+
+    async def _conduct_additional_research(self, improvement_plan: Dict[str, Any], content_plan: str, findings: List[ResearchFinding]) -> List[ResearchFinding]:
         """Conduct additional research based on the improvement plan."""
-        new_findings =[]
+        new_findings = []
+        
         for gap in improvement_plan.get('research_gaps', []):
-            queries =[]
-            for query_text in gap['suggested_queries']:
+            queries = []
+            for query_text in gap.get('suggested_queries', []):
                 query = ResearchQuery(
-                    text=query_text, 
+                    text=query_text,
                     type='deep-dive',
                     priority=5,
                     agent=AgentRole.WEB_EXPERT,
-                    context= f'Filling research gap: {gap['topic']}'
+                    context=f"Filling research gap: {gap.get('topic', 'general improvement')}"
                 )
                 queries.append(query)
-            tasks =[self.orchestrator.agents[AgentRole.WEB_EXPERT].search_web(query) for query in queries]
-            results = await asyncio.gather(*tasks)
-            for finding in results:
-                verification = await self.orchestrator.agents[AgentRole.FACT_CHECKER].verify_information(finding)
-                if verification['verification_status'] in ['verified', 'partially_verified']:
-                    new_findings.append(finding)
-        return new_findings
-    
-    async def _find_additional_stories(self, narrative_gaps:List[Dict[str, Any]], content_plan:str)-> List[Story]:
-        """Find additional stories based on the narrative gaps."""
-        storyteller = self.orchestrator.agents[AgentRole.STORYTELLER]
-        all_new_stories = []
-        for gap in narrative_gaps:
-            prompt = f"""
-            Find stories specifically addressing this narrative gap:
-            Theme: {gap['theme']}
-            Requirements: {', '.join(gap['requirements'])}
-            Original content plan: {content_plan}
-            """
-            new_stories = await storyteller.find_stories(prompt)
-            all_new_stories.extend(new_stories)
-        return all_new_stories
+                
+            tasks = [
+                self.orchestrator.agents[AgentRole.WEB_EXPERT].search_web(query)
+                for query in queries
+            ]
+            
+            try:
+                results = await asyncio.gather(*tasks)
+                for finding in results:
+                    verification = await self.orchestrator.agents[AgentRole.FACT_CHECKER].verify_information(finding)
+                    if verification['verification_status'] in ['verified', 'partially_verified']:
+                        new_findings.append(finding)
+            except Exception as e:
+                logger.error(f"Error in additional research: {str(e)}")
+                
+        return new_findings    
     async def _improve_synthesis(self, current_synthesis: Dict[str, Any], 
                                improvement_plan: Dict[str, Any],
                                findings: List[ResearchFinding], 
-                               stories: List[Story]) -> Dict[str, Any]:
+                               ) -> Dict[str, Any]:
         """Improve synthesis based on improvement plan."""
         prompt = f"""
         Improve this synthesis based on the improvement plan and additional research:
@@ -1155,8 +1018,6 @@ class ResearchImprover:
         Current Synthesis: {json.dumps(current_synthesis)}
         Improvement Plan: {json.dumps(improvement_plan)}
         Number of total findings: {len(findings)}
-        Number of total stories: {len(stories)}
-
         Focus on:
         1. Addressing identified gaps
         2. Strengthening weak sections
@@ -1168,7 +1029,7 @@ class ResearchImprover:
         """
         response = await self.orchestrator.api.generate_content(prompt)
         return json.loads(response) if isinstance(response, str) else response
-    
+
 class ResearchOrchestrator:
     def __init__(self, rate_limiter, api):
         self.api = api
@@ -1180,7 +1041,6 @@ class ResearchOrchestrator:
             AgentRole.FACT_CHECKER: FactCheckAgent(api),
             AgentRole.SYNTHESIS_EXPERT: SynthesisAgent(api),
             AgentRole.CRITIC:CriticAgent(api),
-            AgentRole.STORYTELLER: StorytellerAgent(api)
         }
         self.qa_system = QuestionAnswering(
             self.agents[AgentRole.WEB_EXPERT],
@@ -1190,13 +1050,14 @@ class ResearchOrchestrator:
         for agent in self.agents.values():
             if isinstance(agent, WebResearchAgent):
                 agent.set_orchestrator(self)
-
+    async def answer_question(self, question:str)->Dict[str, Any]:
+        return await self.qa_system.answer_question(question)
+    
 
     async def conduct_research(self, content_plan: str) -> Dict[str, Any]:
         logger.info(f"Starting research on: {content_plan}")
 
         # Find relevant stories
-        stories = await self.agents[AgentRole.STORYTELLER].find_stories(content_plan)
 
         # Generate queries
         queries = await self.agents[AgentRole.QUERY_SPECIALIST].generate_queries(content_plan)
@@ -1228,21 +1089,20 @@ class ResearchOrchestrator:
 
         # Synthesize everything
         synthesis = await self.agents[AgentRole.SYNTHESIS_EXPERT].synthesize_findings(
-            verified_findings, content_plan, stories
+            verified_findings, content_plan
         )
 
         # Critique research
-        critique = await self.agents[AgentRole.CRITIC].critique_research(
-            synthesis, verified_findings, stories
+        critique = await self.agents[AgentRole.CRITIC].critiqe_research(
+            synthesis, verified_findings,
         )
         improved_synthesis, final_critique = await self.improver.improve_research(
-            synthesis, critique, verified_findings, stories, content_plan
+            synthesis, critique, verified_findings,  content_plan
         )
 
         # Prepare final report
         report_data = {
             "content_plan": content_plan,
-            "stories": [s.to_dict() for s in stories],
             "synthesis": improved_synthesis,
             "critique": final_critique,
             "improvement_history": {
@@ -1254,7 +1114,6 @@ class ResearchOrchestrator:
             "metadata": {
                 "total_queries": len(queries),
                 "total_findings": len(verified_findings),
-                "total_stories": len(stories),
                 "quality_score": final_critique['overall_quality']
             },
             "sources": [self.sources[s].to_dict() for s in set().union(

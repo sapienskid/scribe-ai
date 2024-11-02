@@ -69,6 +69,22 @@ class ContentPlan:
             }
             return cls(**cleaned_data)
         except Exception as e:
-            logger.error(f"Error creating ContentPlan from API response: {str(E)}")
+            logger.error(f"Error creating ContentPlan from API response: {str(e)}")
             return cls._create_default(topic)
+    @classmethod
+    def _create_default(cls, topic:str)->'ContentPlan':
+        sections = [
+            Section(title="Main Discussion", description=f"Detailed analysis of {topic}", index=0),
+            Section(title="Key Aspects", description=f"Important aspects of {topic}", index=1),
+            Section(title="Future Implications", description="Future outlook and implications", index=2)
+        ]
+        return cls(
+            topic=topic,
+            target_audience="General audience",
+            content_type="Article",
+            sections=sections,
+            research_requirements={"general": ["Basic topic research", "Fact verification"]},
+            required_expertise=["Topic knowledge", "Content writing"],
+            content_goals=["Inform readers", "Provide clear explanation"]
+        )
             

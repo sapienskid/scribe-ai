@@ -22,4 +22,11 @@ class Agent:
     responsibilities: List[str]
     communication_style: str
     collaboration_preferences: List[str]
-    
+
+@dataclass
+class Section:
+    title: str
+    description: str
+    content: Optional[str] = None
+    index: int =0
+

@@ -111,4 +111,13 @@ class ResearchSuggestion:
     improvement_area: str
     reasoning: str
     suggested_citations: List[Citation]
-           
+@dataclass
+class SectionImprovement:
+    original_content: str
+    improved_content: str
+    improvement_type: str
+    agent_name: str
+    reasoning: str
+    changes_made: List[str]
+    citations_added: List[Citation]  
+    confidence_score: float        

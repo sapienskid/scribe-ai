@@ -102,4 +102,13 @@ class ResearchFinding:
     citations: List[Citation]
     confidence_score: float
     verification_status: str
-       
+@dataclass
+class ResearchSuggestion:
+    agent_name: str
+    agent_role: str
+    suggestion: str
+    priority: str
+    improvement_area: str
+    reasoning: str
+    suggested_citations: List[Citation]
+           

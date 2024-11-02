@@ -96,4 +96,10 @@ class Citation:
     quote: Optional[str]
     context: str
     reference_id: str
-    
+@dataclass
+class ResearchFinding:
+    content: str
+    citations: List[Citation]
+    confidence_score: float
+    verification_status: str
+       
